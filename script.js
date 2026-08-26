@@ -1710,6 +1710,16 @@ document.addEventListener("DOMContentLoaded", function () {
         updateAll();
     }
 
+    /* -------------------- Roster Sheet Name Resolver -------------------- */
+    // Car:  "<mode> <shift>"              e.g. "arrival morning"
+    // Bus:  "<lane> <shift>"              e.g. "bus morning"   (no mode split)
+    // Others: "<lane> <mode> <shift>"     e.g. "train arrival night"
+    function getRosterSheetName() {
+        if (currentLane === "car") return `${currentMode} ${currentShift}`.toLowerCase();
+        if (currentLane === "bus") return `${currentLane} ${currentShift}`.toLowerCase();
+        return `${currentLane} ${currentMode} ${currentShift}`.toLowerCase();
+    }
+
     /* -------------------- Main Template Assignment -------------------- */
     function applyMainTemplate(officerCount) {
         if (!excelWorkbook) {
@@ -1717,7 +1727,7 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
 
-        const sheetName = (currentLane === "car" ? `${currentMode} ${currentShift}` : `${currentLane} ${currentMode} ${currentShift}`).toLowerCase();
+        const sheetName = getRosterSheetName();
         const sheetData = excelData[sheetName];
 
         if (!sheetData) {
@@ -1845,7 +1855,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!excelWorkbook) { alert("Excel template not loaded."); return; }
         if (currentShift !== "night") { alert("Train/OWC officers only apply to night shift."); return; }
 
-        const sheetName = (currentLane === "car" ? `${currentMode} ${currentShift}` : `${currentLane} ${currentMode} ${currentShift}`).toLowerCase();
+        const sheetName = getRosterSheetName();
         const sheetData = excelData[sheetName];
         if (!sheetData) { alert("No sheet found for " + sheetName); return; }
 
@@ -2244,7 +2254,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (type === "main") {
             // Cap = highest officer number in the template sheet
-            const sheetName = (currentLane === "car" ? `${currentMode} ${currentShift}` : `${currentLane} ${currentMode} ${currentShift}`).toLowerCase();
+            const sheetName = getRosterSheetName();
             const sheetData = excelData[sheetName] || [];
             const max = sheetData.reduce((m, row) => {
                 const n = parseInt(row.Officer);
@@ -2261,7 +2271,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         if (type === "trainowc") {
-            const sheetName = (currentLane === "car" ? `${currentMode} ${currentShift}` : `${currentLane} ${currentMode} ${currentShift}`).toLowerCase();
+            const sheetName = getRosterSheetName();
             const sheetData = excelData[sheetName] || [];
             const prefix = currentMode === "arrival" ? "TRAIN" : "OWC";
             const allLabels = [...new Set(
