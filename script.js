@@ -110,6 +110,52 @@ const zones = {
     ]
 };
 
+/* -------------------- Roster Sheet Name Resolver -------------------- */
+// Car:  "<mode> <shift>"              e.g. "arrival morning"
+// Bus:  "<lane> <shift>"              e.g. "bus morning"   (no mode split)
+// Others: "<lane> <mode> <shift>"     e.g. "train arrival night"
+function getRosterSheetName() {
+    if (currentLane === "car") return `${currentMode} ${currentShift}`.toLowerCase();
+    if (currentLane === "bus") return `${currentLane} ${currentShift}`.toLowerCase();
+    return `${currentLane} ${currentMode} ${currentShift}`.toLowerCase();
+}
+
+/* ---------------- Bus: dynamic per-counter row duplication ----------------
+   Bus clusters can have several officers assigned to the SAME counter at
+   once (e.g. "Arrival Cluster A" with 3 officers). For Bus only, we render
+   one row per distinct officer found for that counter in the roster sheet
+   (bus morning / bus night), instead of a single fixed row. Every other
+   lane keeps exactly one row per counter (order.length will be 0 → 1 row).
+------------------------------------------------------------------------- */
+function getCounterOfficerOrder(counter) {
+    const sheetData = excelData[getRosterSheetName()];
+    if (!sheetData) return [];
+    const officers = new Set();
+    sheetData.forEach(row => {
+        if (row.Counter === counter) {
+            const n = parseInt(row.Officer);
+            if (!isNaN(n)) officers.add(n);
+        }
+    });
+    return [...officers].sort((a, b) => a - b);
+}
+
+function getCounterRowCount(lane, counter) {
+    if (lane !== "bus") return 1;
+    return Math.max(getCounterOfficerOrder(counter).length, 1);
+}
+
+// Which row-instance (1-based) a given officer number occupies for this
+// counter. Falls back to instance 1 if the officer isn't found (e.g. Excel
+// not loaded yet, or the officer wasn't pre-counted) so painting never
+// silently no-ops.
+function getOfficerInstance(lane, counter, officerNum) {
+    if (lane !== "bus") return 1;
+    const order = getCounterOfficerOrder(counter);
+    const idx = order.indexOf(officerNum);
+    return idx === -1 ? 1 : idx + 1;
+}
+
 /* ---------------- COLOR PICKER ----------------- */
 document.querySelectorAll(".color-btn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -178,21 +224,31 @@ function renderTableOnce() {
         table.appendChild(timeRow);
 
         zone.counters.forEach(counter => {
-            let row = document.createElement("tr");
-            let label = document.createElement("td");
-            label.innerText = counter;
-            row.appendChild(label);
+            // For Bus: emit one row per officer assigned to this counter (from Excel).
+            // For all other lanes: exactly one row.
+            const rowCount = getCounterRowCount(currentLane, counter);
 
-            times.forEach((t, i) => {
-                let cell = document.createElement("td");
-                cell.className = "counter-cell";
-                cell.dataset.zone = zone.name;
-                cell.dataset.time = i;
-                cell.dataset.counter = counter;
-                row.appendChild(cell);
-            });
+            for (let instance = 1; instance <= rowCount; instance++) {
+                let row = document.createElement("tr");
+                let label = document.createElement("td");
+                // Bus rows show "Counter (N/total)" to distinguish slots
+                label.innerText = (currentLane === "bus" && rowCount > 1)
+                    ? `${counter} (${instance}/${rowCount})`
+                    : counter;
+                row.appendChild(label);
 
-            table.appendChild(row);
+                times.forEach((t, i) => {
+                    let cell = document.createElement("td");
+                    cell.className = "counter-cell";
+                    cell.dataset.zone = zone.name;
+                    cell.dataset.time = i;
+                    cell.dataset.counter = counter;
+                    cell.dataset.instance = instance; // 1-based slot within this counter
+                    row.appendChild(cell);
+                });
+
+                table.appendChild(row);
+            }
         });
 
         let subtotalRow = document.createElement("tr");
@@ -1710,16 +1766,6 @@ document.addEventListener("DOMContentLoaded", function () {
         updateAll();
     }
 
-    /* -------------------- Roster Sheet Name Resolver -------------------- */
-    // Car:  "<mode> <shift>"              e.g. "arrival morning"
-    // Bus:  "<lane> <shift>"              e.g. "bus morning"   (no mode split)
-    // Others: "<lane> <mode> <shift>"     e.g. "train arrival night"
-    function getRosterSheetName() {
-        if (currentLane === "car") return `${currentMode} ${currentShift}`.toLowerCase();
-        if (currentLane === "bus") return `${currentLane} ${currentShift}`.toLowerCase();
-        return `${currentLane} ${currentMode} ${currentShift}`.toLowerCase();
-    }
-
     /* -------------------- Main Template Assignment -------------------- */
     function applyMainTemplate(officerCount) {
         if (!excelWorkbook) {
@@ -1769,17 +1815,33 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 if (startIndex === -1 || endIndex === -1) return;
 
-                for (let t = startIndex; t < endIndex; t++) {
-                    let allCells = [...document.querySelectorAll(`.counter-cell[data-time="${t}"]`)];
-                    allCells.forEach(cell => {
-                        const rowCounter = cell.parentElement.firstChild.innerText;
-                        if (rowCounter === counter) {
-                            cell.classList.add("active");
-                            cell.style.background = currentColor;
-                            cell.dataset.officer = officerLabel;
-                            cell.dataset.type = "main";
-                        }
-                    });
+                if (currentLane === "bus") {
+                    // Paint only the instance row matching this officer's slot
+                    const instance = getOfficerInstance(currentLane, counter, officer);
+                    for (let t = startIndex; t < endIndex; t++) {
+                        let allCells = [...document.querySelectorAll(`.counter-cell[data-time="${t}"][data-counter="${counter}"][data-instance="${instance}"]`)];
+                        allCells.forEach(cell => {
+                            if (!cell.classList.contains("active")) {
+                                cell.classList.add("active");
+                                cell.style.background = currentColor;
+                                cell.dataset.officer = officerLabel;
+                                cell.dataset.type = "main";
+                            }
+                        });
+                    }
+                } else {
+                    for (let t = startIndex; t < endIndex; t++) {
+                        let allCells = [...document.querySelectorAll(`.counter-cell[data-time="${t}"]`)];
+                        allCells.forEach(cell => {
+                            const rowCounter = cell.parentElement.firstChild.innerText;
+                            if (rowCounter === counter) {
+                                cell.classList.add("active");
+                                cell.style.background = currentColor;
+                                cell.dataset.officer = officerLabel;
+                                cell.dataset.type = "main";
+                            }
+                        });
+                    }
                 }
             });
         }
